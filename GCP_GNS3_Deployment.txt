@@ -1,0 +1,169 @@
+gcloud compute
+gcloud init
+
+clear
+##### GCP Cloud Script - Initial Variables for Project and VM #####
+instance_Number=$(( RANDOM % 100 ))
+project_ID=gns3-project-$instance_Number
+
+##### GCP Cloud Script - Project Creation #####
+gcloud projects create $project_ID
+gcloud projects update $project_ID --name=$project_ID
+gcloud config set project $project_ID
+
+##### At this step, you must enable billing for the new project. #####
+\echo "";\
+echo Please associate Project $project_ID to your billing account.;\
+echo "";\
+echo More Info: https://support.google.com/googleapi/answer/6158867?hl=en;\
+echo "";\
+
+##### Failed to set and test this, intent to bypass... ##### 
+# It is optional to skip the project creation, please make sure to 
+# instance_Number=$(( RANDOM % 100 ))
+# project_ID=gns3-project-$idn
+
+##### Obtain compute@developer gservice account. #####
+gcloud projects get-iam-policy $project_ID --format json > ~/policy.json
+cat ~/policy.json | grep compute@
+service_Account=XXXXXXXXXXXXX-compute@developer.gserviceaccount.com
+rm ~/policy.json
+
+##### GCP Cloud Script - VM Creation #####
+clear
+instance_Name=gns3-instance-$instance_Number
+zone_Location=us-central1-a
+machine_Type=n1-standard-2
+subnet_Prefix=default
+minimum_CPU="Intel Sandy Bridge"
+# --min-cpu-platform="Intel Skylake" # 6k i7
+# --min-cpu-platform="Intel Skylake" # Broadwell or Later
+# --min-cpu-platform="Intel Haswell" # 47XX-58/9XXK i7
+# --min-cpu-platform="Intel Ivy Bridge" # 48XX-49XXk i7
+# --min-cpu-platform="Intel Sandy Bridge" # 26/7XX-38/9XXk i7
+image_Name=ubuntu-1804-bionic-v20200218
+image_Project=ubuntu-os-cloud
+boot_DiskSize=10GB
+boot_DiskType=pd-standard
+boot_DiskName=gns3-instance-$instance_Number-disk0
+# Additional Disk:
+second_DiskSize=50GB
+second_DiskType=pd-standard
+second_DiskName=gns3-instance-$instance_Number-disk1
+
+gcloud beta compute\
+ --project=$project_ID instances create $instance_Name\
+ --zone=$zone_Location\
+ --machine-type=$machine_Type\
+ --subnet=$subnet_Prefix\
+ --network-tier=STANDARD\
+ --no-restart-on-failure\
+ --maintenance-policy=TERMINATE\
+ --preemptible\
+ --service-account=$service_Account\
+ --scopes=\
+https://www.googleapis.com/auth/devstorage.read_only,\
+https://www.googleapis.com/auth/logging.write,\
+https://www.googleapis.com/auth/monitoring.write,\
+https://www.googleapis.com/auth/servicecontrol,\
+https://www.googleapis.com/auth/service.management.readonly,\
+https://www.googleapis.com/auth/trace.append\
+ --min-cpu-platform="$minimum_CPU"\
+ --image=$image_Name\
+ --image-project=$image_Project\
+ --boot-disk-size=$boot_DiskSize\
+ --boot-disk-type=$boot_DiskType\
+ --boot-disk-device-name=$boot_DiskName\
+ --create-disk=\
+mode=rw,\
+size=$second_DiskSize,\
+type=projects/$project_ID/zones/$zone_Location/diskTypes/$second_DiskType,\
+name=$second_DiskName,\
+device-name=$second_DiskName\
+ --no-shielded-secure-boot\
+ --no-shielded-vtpm\
+ --no-shielded-integrity-monitoring\
+ --reservation-affinity=any
+
+### SSH to Created Instance ###
+gcloud compute ssh --project $project_ID --zone $zone_Location $instance_Name
+gcloud compute ssh $instance_Name
+
+### Stop/Start/Delete Instance ###
+gcloud compute instances stop $instance_Name
+gcloud compute instances start $instance_Name
+### This doesn't work, failures in resources. ###
+instance_Name=gns3-instance-$id
+gcloud compute instances delete $instance_Name
+
+### Format sdb post startup of VM ###
+sudo -i
+fdisk -l /dev/sdb
+fdisk /dev/sdb
+n
+p
+#defualt
+#defualt
+#defualt
+w
+mkfs.ext4 /dev/sdb1
+mount -t ext4 /dev/sdb1 /opt
+blkid | grep /dev/sdb1
+# Take note of the line, example:
+/dev/sdb1: UUID="$HD_UUID" TYPE="ext4" PARTUUID="$PART_UUID"
+vi /etc/fstab
+# Add a new line, example provided:
+UUID=$HD_UUID /opt ext4 defaults 0 2
+
+#Deploy VM Manually or Scripted
+# Reference: https://hacksbrain.com/2018/06/21/installing-gns3-server-on-ubuntu-18-04-lts-bionic-beaver/
+
+addgroup kvm
+addgroup docker
+adduser gns3
+# Complete registration, password gns3
+usermod -aG sudo,kvm,docker gns3
+su gns3
+cd ~
+sudo -i
+cd /home/gns3
+add-apt-repository --remove ppa:gns3/unstable
+add-apt-repository ppa:gns3/ppa
+apt autoremove
+apt-get update
+apt-get upgrade
+
+mkdir /opt/gns3
+chown gns3:gns3 /opt/gns3
+exit
+mkdir /opt/gns3/projects
+mkdir /opt/gns3/images
+
+cd /tmp
+curl https://raw.githubusercontent.com/GNS3/gns3-server/master/scripts/remote-install.sh > gns3-remote-install.sh
+sudo bash gns3-remote-install.sh --with-iou --with-i386-repository
+
+### At this point, the latest version of GNS3 will connect. ###
+
+### Attempts to downgrade GNS3 ###
+
+sudo -i
+systemctl stop gns3
+systemctl disable gns3
+#sudo apt remove gns3-server
+sudo apt install python3-pip
+pip3 install gns3-server==2.2.0
+systemctl enable gns3
+systemctl restart gns3
+
+### Recommended server.conf: ###
+nano /etc/gns3/gns3_server.conf
+#nano ~/.config/GNS3/2.2/gns3_server.conf
+[Server]
+host = 0.0.0.0
+report_errors = True
+images_path = /opt/gns3/images
+projects_path = /opt/gns3/projects
+auth = True
+user = user
+password = password
