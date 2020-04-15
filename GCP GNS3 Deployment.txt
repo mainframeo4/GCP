@@ -114,3 +114,6 @@ blkid | grep /dev/sdb1
 vi /etc/fstab
 # Add a new line, example provided:
 UUID=$HD_UUID /opt ext4 defaults 0 2
+
+# Install GNS3:
+# https://github.com/mainframeo4/Linux-Scripts/blob/master/Deploy%20GNS%20Server%20-%20Ubuntu.txt
